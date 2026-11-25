@@ -1,0 +1,18 @@
+# Catkin workspace outputs
+/.build_deps/
+/.catkin_tools/
+/build/
+/devel/
+/install/
+/src/CMakeLists.txt
+
+# Runtime output and local datasets
+/logs/
+**/Log/
+**/PCD/
+*.bag
+
+# Local editor settings and Python cache
+.vscode/
+__pycache__/
+*.py[cod]
