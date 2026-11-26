@@ -19,6 +19,7 @@ ros::Publisher pub1;
 ros::Publisher pub2;
 ros::Publisher pub3;
 string waypoint_type = string("manual");
+string planning_frame;
 bool is_odom_ready;
 nav_msgs::Odometry odom;
 nav_msgs::Path waypoints;
@@ -84,7 +85,7 @@ void load_waypoints(ros::NodeHandle& nh, const ros::Time& time_base) {
 }
 
 void publish_waypoints() {
-    waypoints.header.frame_id = std::string("world");
+    waypoints.header.frame_id = planning_frame.empty() ? "world" : planning_frame;
     waypoints.header.stamp = ros::Time::now();
     pub1.publish(waypoints);
     geometry_msgs::PoseStamped init_pose;
@@ -98,7 +99,7 @@ void publish_waypoints() {
 void publish_waypoints_vis() {
     nav_msgs::Path wp_vis = waypoints;
     geometry_msgs::PoseArray poseArray;
-    poseArray.header.frame_id = std::string("world");
+    poseArray.header.frame_id = planning_frame.empty() ? "world" : planning_frame;
     poseArray.header.stamp = ros::Time::now();
 
     {
@@ -144,6 +145,12 @@ void odom_callback(const nav_msgs::Odometry::ConstPtr& msg) {
 }
 
 void goal_callback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
+    if (!planning_frame.empty() && msg->header.frame_id != planning_frame) {
+        ROS_WARN_STREAM("[waypoint_generator] Expected goal in " << planning_frame
+                        << ", received " << msg->header.frame_id);
+        return;
+    }
+
 /*    if (!is_odom_ready) {
         ROS_ERROR("[waypoint_generator] No odom!");
         return;
@@ -245,6 +252,7 @@ int main(int argc, char** argv) {
     ros::init(argc, argv, "waypoint_generator");
     ros::NodeHandle n("~");
     n.param("waypoint_type", waypoint_type, string("manual"));
+    n.getParam("frame_id", planning_frame);
     ros::Subscriber sub1 = n.subscribe("odom", 10, odom_callback);
     ros::Subscriber sub2 = n.subscribe("goal", 10, goal_callback);
     ros::Subscriber sub3 = n.subscribe("traj_start_trigger", 10, traj_start_trigger_callback);

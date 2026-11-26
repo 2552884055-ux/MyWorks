@@ -1,0 +1,48 @@
+<launch>
+  <arg name="fcu_url" default="" />
+  <arg name="ctrl_config" default="$(find px4ctrl)/config/ctrl_param_fpv.yaml" />
+  <arg name="start_serial" default="true" />
+  <arg name="port" default="/dev/ttyUSB0" />
+  <arg name="baud" default="115200" />
+  <arg name="goal_height" default="1.0" />
+  <arg name="odom_topic" default="/Odometry" />
+  <arg name="max_horizontal_speed" default="0.3" />
+  <arg name="max_horizontal_acceleration" default="0.6" />
+  <arg name="stop_distance" default="0.35" />
+  <arg name="slow_distance" default="0.9" />
+  <arg name="range_timeout" default="0.2" />
+  <arg name="braking_deceleration" default="0.3" />
+  <arg name="braking_delay" default="0.3" />
+
+  <include file="$(find ego_planner)/launch/run_with_fastlio.launch">
+    <arg name="odom_topic" value="$(arg odom_topic)" />
+    <arg name="goal_height" value="$(arg goal_height)" />
+  </include>
+
+  <include if="$(arg start_serial)" file="$(find tof_velocity_guard)/launch/serial_range.launch">
+    <arg name="port" value="$(arg port)" />
+    <arg name="baud" value="$(arg baud)" />
+  </include>
+
+  <include if="$(eval arg('fcu_url') != '')" file="$(find mavros)/launch/px4.launch">
+    <arg name="fcu_url" value="$(arg fcu_url)" />
+  </include>
+
+  <node pkg="px4ctrl" type="px4ctrl_node" name="px4ctrl" output="screen">
+    <remap from="~odom" to="$(arg odom_topic)" />
+    <remap from="~cmd" to="/position_cmd" />
+    <rosparam command="load" file="$(arg ctrl_config)" />
+    <param name="use_bodyrate_ctrl" value="false" />
+    <param name="auto_takeoff_land/enable" value="false" />
+    <param name="auto_takeoff_land/enable_auto_arm" value="false" />
+    <param name="auto_takeoff_land/no_RC" value="false" />
+    <param name="tof/enabled" value="true" />
+    <param name="tof/stop_distance" type="double" value="$(arg stop_distance)" />
+    <param name="tof/slow_distance" type="double" value="$(arg slow_distance)" />
+    <param name="tof/max_horizontal_speed" type="double" value="$(arg max_horizontal_speed)" />
+    <param name="tof/max_horizontal_acceleration" type="double" value="$(arg max_horizontal_acceleration)" />
+    <param name="tof/range_timeout" type="double" value="$(arg range_timeout)" />
+    <param name="tof/braking_deceleration" type="double" value="$(arg braking_deceleration)" />
+    <param name="tof/braking_delay" type="double" value="$(arg braking_delay)" />
+  </node>
+</launch>

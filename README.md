@@ -9,6 +9,7 @@
 | [`src/FAST_LIO_GLOBAL`](src/FAST_LIO_GLOBAL) | 激光惯性里程计、点云建图以及可选的雷达速度更新 |
 | [`src/reve`](src/reve) | 从带径向多普勒速度的点云估计雷达自身的三轴速度 |
 | [`src/livox_ros_driver2`](src/livox_ros_driver2) | MID360 的 ROS 驱动和点云消息定义 |
+| [`src/tof_velocity_guard`](src/tof_velocity_guard/README.md) | 接收 STM32 四路 ToF 测距，并根据距离限制速度指令 |
 | `src/octomap_mapping`、`src/pointcloud_to_laserscan`、`src/pcd2pgm_package` | 地图转换与二维导航相关的辅助模块 |
 
 ## 构建
@@ -27,6 +28,24 @@ source devel/setup.bash
 [`build_ros1.sh`](build_ros1.sh) 会在需要时从 ROS1 模板生成 Livox 的 `package.xml`，并调用 `catkin_make`。本地依赖目录、构建产物、运行日志和示例 bag 不随仓库提供。
 
 ## 分阶段运行
+
+### 读取 STM32 四路测距
+
+串口协议、限幅参数与两个节点的启动说明见[测距与速度限幅 README](src/tof_velocity_guard/README.md)。
+
+STM32 串口使用 115200、8N1，无流控。每行发送四个十进制毫米值，顺序固定为前、后、左、右，逗号分隔，以 LF 或 CRLF 结束。例如 `420,710,-1,980\r\n` 表示左侧读取失败。`-1` 发布为 `NaN`；其余数值换算成米，接收端应仅使用位于消息 `min_range` 至 `max_range` 内的有限值。格式错误的行丢弃，串口断开后自动重连，期间不重复发布旧值。
+
+```bash
+source devel/setup.bash
+roslaunch tof_velocity_guard serial_range.launch port:=/dev/ttyUSB0
+```
+
+默认发布 `/tof/front`、`/tof/rear`、`/tof/left` 和 `/tof/right`，类型均为 `sensor_msgs/Range`。同组四路使用本机接收时间，默认坐标系依次为 `tof_front`、`tof_rear`、`tof_left`、`tof_right`。按实测设置 launch 的 `min_range`、`max_range` 和 `field_of_view`。若 USB 串口设备编号会变，可使用 `/dev/serial/by-id/` 下的设备路径。
+
+```bash
+rostopic echo /tof/front
+rosbag record -O tof.bag /tof/front /tof/rear /tof/left /tof/right
+```
 
 ### 单独验证 REVE 测速
 

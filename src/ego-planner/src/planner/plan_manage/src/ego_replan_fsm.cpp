@@ -8,11 +8,14 @@ namespace ego_planner
   {
     current_wp_ = 0;
     exec_state_ = FSM_EXEC_STATE::INIT;
+    trigger_ = false;
     have_target_ = false;
     have_odom_ = false;
+    have_new_target_ = false;
 
     /*  fsm param  */
     nh.param("fsm/flight_type", target_type_, -1);
+    nh.param("fsm/manual_goal_height", manual_goal_height_, 1.0);
     nh.param("fsm/thresh_replan", replan_thresh_, -1.0);
     nh.param("fsm/thresh_no_replan", no_replan_thresh_, -1.0);
     nh.param("fsm/planning_horizon", planning_horizen_, -1.0);
@@ -108,7 +111,7 @@ namespace ego_planner
 
   void EGOReplanFSM::waypointCallback(const nav_msgs::PathConstPtr &msg)
   {
-    if (msg->poses[0].pose.position.z < -0.1)
+    if (!have_odom_ || msg->poses.empty() || msg->poses.front().pose.position.z < -0.1)
       return;
 
     cout << "Triggered!" << endl;
@@ -116,7 +119,7 @@ namespace ego_planner
     init_pt_ = odom_pos_;
 
     bool success = false;
-    end_pt_ << msg->poses[0].pose.position.x, msg->poses[0].pose.position.y, 1.0;
+    end_pt_ << msg->poses.front().pose.position.x, msg->poses.front().pose.position.y, manual_goal_height_;
     success = planner_manager_->planGlobalTraj(odom_pos_, odom_vel_, Eigen::Vector3d::Zero(), end_pt_, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
 
     visualization_->displayGoalPoint(end_pt_, Eigen::Vector4d(0, 0.5, 0.5, 1), 0.3, 0);

@@ -1,0 +1,53 @@
+<launch>
+  <arg name="start_serial" default="true" />
+  <arg name="port" default="/dev/ttyUSB0" />
+  <arg name="baud" default="115200" />
+  <arg name="goal_height" default="1.0" />
+  <arg name="odometry_topic" default="/Odometry" />
+  <arg name="position_cmd_topic" default="/position_cmd" />
+  <arg name="output_topic" default="/tof/limited_velocity" />
+  <arg name="acceleration_topic" default="/tof/limited_acceleration" />
+  <arg name="stop_distance" default="0.35" />
+  <arg name="slow_distance" default="0.9" />
+  <arg name="max_horizontal_speed" default="0.3" />
+  <arg name="max_vertical_speed" default="0.0" />
+  <arg name="max_horizontal_acceleration" default="0.6" />
+  <arg name="position_gain" default="0.8" />
+  <arg name="velocity_gain" default="2.0" />
+  <arg name="range_timeout" default="0.2" />
+  <arg name="command_timeout" default="0.2" />
+  <arg name="tf_timeout" default="0.15" />
+  <arg name="odometry_timeout" default="0.2" />
+
+  <!-- An already running FAST-LIO supplies odometry, registered points and TF. -->
+  <include file="$(find ego_planner)/launch/run_with_fastlio.launch">
+    <arg name="odom_topic" value="$(arg odometry_topic)" />
+    <arg name="goal_height" value="$(arg goal_height)" />
+    <arg name="position_cmd_topic" value="$(arg position_cmd_topic)" />
+  </include>
+
+  <include if="$(arg start_serial)" file="$(find tof_velocity_guard)/launch/serial_range.launch">
+    <arg name="port" value="$(arg port)" />
+    <arg name="baud" value="$(arg baud)" />
+  </include>
+
+  <include file="$(find tof_velocity_guard)/launch/velocity_limiter.launch">
+    <arg name="input_topic" value="$(arg position_cmd_topic)" />
+    <arg name="input_type" value="position_command" />
+    <arg name="output_topic" value="$(arg output_topic)" />
+    <arg name="acceleration_topic" value="$(arg acceleration_topic)" />
+    <arg name="odometry_topic" value="$(arg odometry_topic)" />
+    <arg name="odometry_timeout" value="$(arg odometry_timeout)" />
+    <arg name="position_gain" value="$(arg position_gain)" />
+    <arg name="velocity_gain" value="$(arg velocity_gain)" />
+    <arg name="max_horizontal_acceleration" value="$(arg max_horizontal_acceleration)" />
+    <arg name="body_frame" value="body" />
+    <arg name="stop_distance" value="$(arg stop_distance)" />
+    <arg name="slow_distance" value="$(arg slow_distance)" />
+    <arg name="max_horizontal_speed" value="$(arg max_horizontal_speed)" />
+    <arg name="max_vertical_speed" value="$(arg max_vertical_speed)" />
+    <arg name="range_timeout" value="$(arg range_timeout)" />
+    <arg name="command_timeout" value="$(arg command_timeout)" />
+    <arg name="tf_timeout" value="$(arg tf_timeout)" />
+  </include>
+</launch>

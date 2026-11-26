@@ -39,7 +39,7 @@ pcd_save:
                                  # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
 
 radar:                            # 毫米波雷达速度紧耦合(抗退化)
-    radar_en: true                # 启用雷达速度融合
+    radar_en: false               # 关闭雷达速度融合（0）
     radar_topic: "/radar_velocity"# 由 radar_ego_velocity 节点发布(雷达系自速度)
     vel_cov: 0.04                 # 水平速度观测噪声(≈(0.2 m/s)^2), 越小越信任雷达
     vel_cov_z: 1.0e6              # 垂直速度噪声: 2D雷达设很大=>忽略z; 有俯仰角可改小(如0.04)

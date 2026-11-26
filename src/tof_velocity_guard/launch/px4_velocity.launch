@@ -1,0 +1,13 @@
+<launch>
+  <arg name="fcu_url" />
+  <arg name="velocity_topic" default="/tof/limited_velocity" />
+
+  <group>
+    <remap from="mavros/setpoint_velocity/cmd_vel" to="$(arg velocity_topic)" />
+    <include file="$(find mavros)/launch/px4.launch">
+      <arg name="fcu_url" value="$(arg fcu_url)" />
+    </include>
+    <!-- ToF publishes FLU body velocity. MAVROS converts it to MAVLink's body axes. -->
+    <param name="mavros/setpoint_velocity/mav_frame" type="str" value="BODY_NED" />
+  </group>
+</launch>

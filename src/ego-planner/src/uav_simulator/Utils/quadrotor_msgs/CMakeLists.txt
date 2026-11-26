@@ -66,6 +66,8 @@ add_message_files(
   Gains.msg
   OutputData.msg
   PositionCommand.msg
+  Px4ctrlDebug.msg
+  TakeoffLand.msg
   PPROutputData.msg
   Serial.msg
   SO3Command.msg

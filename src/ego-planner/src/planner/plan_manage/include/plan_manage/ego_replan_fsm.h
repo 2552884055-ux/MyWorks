@@ -54,6 +54,7 @@ namespace ego_planner
     double no_replan_thresh_, replan_thresh_;
     double waypoints_[50][3];
     int waypoint_num_;
+    double manual_goal_height_;
     double planning_horizen_, planning_horizen_time_;
     double emergency_time_;
 

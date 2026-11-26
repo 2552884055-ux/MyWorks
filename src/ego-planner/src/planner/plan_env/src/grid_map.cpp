@@ -95,24 +95,29 @@ void GridMap::initMap(ros::NodeHandle &nh)
 
   /* init callback */
 
-  depth_sub_.reset(new message_filters::Subscriber<sensor_msgs::Image>(node_, "/grid_map/depth", 50));
-
-  if (mp_.pose_type_ == POSE_STAMPED)
+  bool use_depth_input;
+  node_.param("grid_map/use_depth_input", use_depth_input, true);
+  if (use_depth_input)
   {
-    pose_sub_.reset(
-        new message_filters::Subscriber<geometry_msgs::PoseStamped>(node_, "/grid_map/pose", 25));
+    depth_sub_.reset(new message_filters::Subscriber<sensor_msgs::Image>(node_, "/grid_map/depth", 50));
 
-    sync_image_pose_.reset(new message_filters::Synchronizer<SyncPolicyImagePose>(
-        SyncPolicyImagePose(100), *depth_sub_, *pose_sub_));
-    sync_image_pose_->registerCallback(boost::bind(&GridMap::depthPoseCallback, this, _1, _2));
-  }
-  else if (mp_.pose_type_ == ODOMETRY)
-  {
-    odom_sub_.reset(new message_filters::Subscriber<nav_msgs::Odometry>(node_, "/grid_map/odom", 100));
+    if (mp_.pose_type_ == POSE_STAMPED)
+    {
+      pose_sub_.reset(
+          new message_filters::Subscriber<geometry_msgs::PoseStamped>(node_, "/grid_map/pose", 25));
 
-    sync_image_odom_.reset(new message_filters::Synchronizer<SyncPolicyImageOdom>(
-        SyncPolicyImageOdom(100), *depth_sub_, *odom_sub_));
-    sync_image_odom_->registerCallback(boost::bind(&GridMap::depthOdomCallback, this, _1, _2));
+      sync_image_pose_.reset(new message_filters::Synchronizer<SyncPolicyImagePose>(
+          SyncPolicyImagePose(100), *depth_sub_, *pose_sub_));
+      sync_image_pose_->registerCallback(boost::bind(&GridMap::depthPoseCallback, this, _1, _2));
+    }
+    else if (mp_.pose_type_ == ODOMETRY)
+    {
+      odom_sub_.reset(new message_filters::Subscriber<nav_msgs::Odometry>(node_, "/grid_map/odom", 100));
+
+      sync_image_odom_.reset(new message_filters::Synchronizer<SyncPolicyImageOdom>(
+          SyncPolicyImageOdom(100), *depth_sub_, *odom_sub_));
+      sync_image_odom_->registerCallback(boost::bind(&GridMap::depthOdomCallback, this, _1, _2));
+    }
   }
 
   // use odometry and point cloud

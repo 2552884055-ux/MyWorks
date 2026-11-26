@@ -1,0 +1,47 @@
+<launch>
+  <!-- FAST-LIO publishes odometry and registered points in camera_init. -->
+  <arg name="odom_topic" default="/Odometry"/>
+  <arg name="cloud_topic" default="/cloud_registered"/>
+  <arg name="frame_id" default="camera_init"/>
+  <arg name="goal_topic" default="/move_base_simple/goal"/>
+  <arg name="position_cmd_topic" default="/position_cmd"/>
+  <arg name="goal_height" default="1.0"/>
+
+  <arg name="map_size_x" default="40.0"/>
+  <arg name="map_size_y" default="40.0"/>
+  <arg name="map_size_z" default="4.0"/>
+  <!-- camera_init starts at the sensor, so the local map extends below its origin. -->
+  <arg name="ground_height" default="-0.5"/>
+  <arg name="max_vel" default="2.0"/>
+  <arg name="max_acc" default="3.0"/>
+  <arg name="planning_horizon" default="7.5"/>
+
+  <include file="$(find ego_planner)/launch/advanced_param.xml">
+    <arg name="map_size_x_" value="$(arg map_size_x)"/>
+    <arg name="map_size_y_" value="$(arg map_size_y)"/>
+    <arg name="map_size_z_" value="$(arg map_size_z)"/>
+    <arg name="odometry_topic" value="$(arg odom_topic)"/>
+    <arg name="cloud_topic" value="$(arg cloud_topic)"/>
+    <arg name="frame_id" value="$(arg frame_id)"/>
+    <arg name="use_depth_input" value="false"/>
+    <arg name="ground_height" value="$(arg ground_height)"/>
+    <arg name="max_vel" value="$(arg max_vel)"/>
+    <arg name="max_acc" value="$(arg max_acc)"/>
+    <arg name="planning_horizon" value="$(arg planning_horizon)"/>
+    <arg name="flight_type" value="1"/>
+    <arg name="manual_goal_height" value="$(arg goal_height)"/>
+  </include>
+
+  <node pkg="ego_planner" name="traj_server" type="traj_server" output="screen">
+    <remap from="/position_cmd" to="$(arg position_cmd_topic)"/>
+    <param name="traj_server/time_forward" value="1.0" type="double"/>
+    <param name="frame_id" value="$(arg frame_id)" type="str"/>
+  </node>
+
+  <node pkg="waypoint_generator" name="waypoint_generator" type="waypoint_generator" output="screen">
+    <remap from="~odom" to="$(arg odom_topic)"/>
+    <remap from="~goal" to="$(arg goal_topic)"/>
+    <param name="waypoint_type" value="manual-lonely-waypoint"/>
+    <param name="frame_id" value="$(arg frame_id)" type="str"/>
+  </node>
+</launch>

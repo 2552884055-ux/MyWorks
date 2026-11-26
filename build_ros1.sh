@@ -5,6 +5,10 @@ workspace_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$workspace_dir"
 source /opt/ros/noetic/setup.bash
 
+if [[ -f "$workspace_dir/.build_deps/mavros-root/setup-local.bash" ]]; then
+    source "$workspace_dir/.build_deps/mavros-root/setup-local.bash"
+fi
+
 local_ros_prefix="$workspace_dir/.build_deps/prefix/opt/ros/noetic"
 if [[ -d "$local_ros_prefix" ]]; then
     export CMAKE_PREFIX_PATH="$local_ros_prefix:${CMAKE_PREFIX_PATH:-}"

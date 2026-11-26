@@ -4,37 +4,41 @@
   <arg name="map_size_z_"/>
 
   <arg name="odometry_topic"/>
-  <arg name="camera_pose_topic"/>
-  <arg name="depth_topic"/>
+  <arg name="camera_pose_topic" default="/grid_map/pose"/>
+  <arg name="depth_topic" default="/grid_map/depth"/>
   <arg name="cloud_topic"/>
+  <arg name="frame_id" default="world"/>
+  <arg name="use_depth_input" default="true"/>
+  <arg name="ground_height" default="-0.01"/>
 
-  <arg name="cx"/>
-  <arg name="cy"/>
-  <arg name="fx"/>
-  <arg name="fy"/>
+  <arg name="cx" default="0.0"/>
+  <arg name="cy" default="0.0"/>
+  <arg name="fx" default="0.0"/>
+  <arg name="fy" default="0.0"/>
 
   <arg name="max_vel"/>
   <arg name="max_acc"/>
   <arg name="planning_horizon"/>
 
-  <arg name="point_num"/>
-  <arg name="point0_x"/>
-  <arg name="point0_y"/>
-  <arg name="point0_z"/>
-  <arg name="point1_x"/>
-  <arg name="point1_y"/>
-  <arg name="point1_z"/>
-  <arg name="point2_x"/>
-  <arg name="point2_y"/>
-  <arg name="point2_z"/>
-  <arg name="point3_x"/>
-  <arg name="point3_y"/>
-  <arg name="point3_z"/>
-  <arg name="point4_x"/>
-  <arg name="point4_y"/>
-  <arg name="point4_z"/>
+  <arg name="point_num" default="0"/>
+  <arg name="point0_x" default="0.0"/>
+  <arg name="point0_y" default="0.0"/>
+  <arg name="point0_z" default="0.0"/>
+  <arg name="point1_x" default="0.0"/>
+  <arg name="point1_y" default="0.0"/>
+  <arg name="point1_z" default="0.0"/>
+  <arg name="point2_x" default="0.0"/>
+  <arg name="point2_y" default="0.0"/>
+  <arg name="point2_z" default="0.0"/>
+  <arg name="point3_x" default="0.0"/>
+  <arg name="point3_y" default="0.0"/>
+  <arg name="point3_z" default="0.0"/>
+  <arg name="point4_x" default="0.0"/>
+  <arg name="point4_y" default="0.0"/>
+  <arg name="point4_z" default="0.0"/>
 
   <arg name="flight_type"/>
+  <arg name="manual_goal_height" default="1.0"/>
 
   <!-- main node -->
   <node pkg="ego_planner" name="ego_planner_node" type="ego_planner_node" output="screen">
@@ -46,6 +50,7 @@
 
     <!-- planning fsm -->
     <param name="fsm/flight_type" value="$(arg flight_type)" type="int"/>
+    <param name="fsm/manual_goal_height" value="$(arg manual_goal_height)" type="double"/>
     <param name="fsm/thresh_replan" value="1.5" type="double"/>
     <param name="fsm/thresh_no_replan" value="2.0" type="double"/>
     <param name="fsm/planning_horizon" value="$(arg planning_horizon)" type="double"/> <!--always set to 1.5 times grater than sensing horizen-->
@@ -78,13 +83,14 @@
     <param name="grid_map/local_update_range_z"  value="4.5" /> 
     <param name="grid_map/obstacles_inflation"     value="0.099" /> 
     <param name="grid_map/local_map_margin" value="30"/>
-    <param name="grid_map/ground_height"        value="-0.01"/>
+    <param name="grid_map/ground_height" value="$(arg ground_height)" type="double"/>
     <!-- camera parameter -->
     <param name="grid_map/cx" value="$(arg cx)"/>
     <param name="grid_map/cy" value="$(arg cy)"/>
     <param name="grid_map/fx" value="$(arg fx)"/>
     <param name="grid_map/fy" value="$(arg fy)"/>
     <!-- depth filter -->
+    <param name="grid_map/use_depth_input" value="$(arg use_depth_input)" type="bool"/>
     <param name="grid_map/use_depth_filter" value="true"/>
     <param name="grid_map/depth_filter_tolerance" value="0.15"/>
     <param name="grid_map/depth_filter_maxdist"   value="5.0"/>
@@ -105,7 +111,7 @@
     <param name="grid_map/visualization_truncate_height"   value="2.4"/>
     <param name="grid_map/show_occ_time"  value="false"/>
     <param name="grid_map/pose_type"     value="2"/>  
-    <param name="grid_map/frame_id"      value="world"/>
+    <param name="grid_map/frame_id"      value="$(arg frame_id)" type="str"/>
 
   <!-- planner manager -->
     <param name="manager/max_vel" value="$(arg max_vel)" type="double"/>

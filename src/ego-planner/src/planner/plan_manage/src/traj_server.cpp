@@ -205,7 +205,6 @@ void cmdCallback(const ros::TimerEvent &e)
   time_last = time_now;
 
   cmd.header.stamp = time_now;
-  cmd.header.frame_id = "world";
   cmd.trajectory_flag = quadrotor_msgs::PositionCommand::TRAJECTORY_STATUS_READY;
   cmd.trajectory_id = traj_id_;
 
@@ -234,6 +233,7 @@ int main(int argc, char **argv)
   ros::init(argc, argv, "traj_server");
   ros::NodeHandle node;
   ros::NodeHandle nh("~");
+  nh.param<std::string>("frame_id", cmd.header.frame_id, "world");
 
   ros::Subscriber bspline_sub = node.subscribe("planning/bspline", 10, bsplineCallback);
 
