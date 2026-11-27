@@ -1,0 +1,17 @@
+
+  <!-- 从项目根目录运行：
+       source devel/setup.bash && roslaunch test/reve/iwr6843aop_live.launch
+  -->
+<launch>
+  <arg name="rviz" default="true"/>
+  <arg name="plot" default="true"/>
+  <arg name="start_driver" default="true"/>
+  <arg name="radar_config" default="$(find ti_mmwave_rospkg)/cfg/6843AOP_icins2021.cfg"/>
+
+  <include file="$(find radar_ego_velocity_estimator)/launch/iwr6843aop_live.launch">
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="plot" value="$(arg plot)"/>
+    <arg name="start_driver" value="$(arg start_driver)"/>
+    <arg name="radar_config" value="$(arg radar_config)"/>
+  </include>
+</launch>

@@ -5,6 +5,7 @@
 | 我想验证 | 需要什么 | 启动与通过标准 |
 | --- | --- | --- |
 | STM32 串口、四路 ToF 测距、速度限幅和两张实时图 | ToF 采集板和 ROS Noetic，可选桌面显示 | [ToF 台架测试](tof/README.md) |
+| IWR6843AOP 点云、REVE 三轴速度和实时图 | IWR6843AOP 和 ROS Noetic，可选桌面显示 | [REVE 实时测速台架测试](reve/README.md) |
 
 ## 后续测试怎么归档
 
