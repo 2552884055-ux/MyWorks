@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | STM32 串口、四路 ToF 测距、速度限幅和两张实时图 | ToF 采集板和 ROS Noetic，可选桌面显示 | [ToF 台架测试](tof/README.md) |
 | IWR6843AOP 点云、REVE 三轴速度和实时图 | IWR6843AOP 和 ROS Noetic，可选桌面显示 | [REVE 实时测速台架测试](reve/README.md) |
+| Mid-360、REVE 和纯 FAST-LIO 一键录包 | Mid-360、IWR6843AOP 和 ROS Noetic | [Mid-360 与 REVE 同步采集](integration/mid360_reve/README.md) |
 
 ## 后续测试怎么归档
 

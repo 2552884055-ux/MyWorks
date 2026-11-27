@@ -56,7 +56,8 @@
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
 #include <geometry_msgs/Vector3.h>
-#include <geometry_msgs/TwistStamped.h>   // [雷达速度融合]
+#include <geometry_msgs/TwistWithCovarianceStamped.h>
+#include <Eigen/Cholesky>
 #include <livox_ros_driver2/CustomMsg.h>
 #include "preprocess.h"
 #include <ikd-Tree/ikd_Tree.h>
@@ -96,26 +97,26 @@ bool   point_selected_surf[100000] = {0};
 bool   lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool   scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
 
-#if 1   // ====== [雷达速度融合-已启用] ======
-/*** Radar velocity fusion (anti-degeneration) ***/
-bool   radar_en = false;                 // 是否启用雷达速度融合
-string radar_topic = "/radar_velocity";  // 雷达自速度话题(雷达系, TwistStamped)
-double radar_vel_cov = 0.1;              // 水平速度观测噪声(标准差^2 量级)
-double radar_vel_cov_z = 1e6;            // 垂直速度噪声; 2D雷达设很大=>基本忽略z
-double radar_chi2_thr = 16.0;            // 卡方门限(3自由度), 超过则拒绝该次观测
-double radar_time_tol = 0.05;            // 雷达与雷达帧时间匹配容差(s)
-double radar_min_trans_vel = 0.3;        // 平移速度阈值(m/s): 低于此值雷达被平滑降权(抗自转/悬停杆臂污染)
-bool   radar_vel_only = false;           // true: 雷达只更新速度(H的rot/bg块置零), 退化方向更稳更强
-bool   radar_robust = false;             // true: 退化感知解耦速度更新(协方差下限+只改速度), 抗强退化
-double radar_pvel_floor = 0.5;           // 速度协方差下限(m/s)^2: 保证退化方向雷达增益足够
-vector<double> radar_extrinT(3, 0.0);    // 雷达->IMU 平移(机头杆臂)
-vector<double> radar_extrinR(9, 0.0);    // 雷达->IMU 旋转(含45°安装角)
-M3D    Radar_R_wrt_IMU = M3D::Identity();
-V3D    Radar_T_wrt_IMU = V3D::Zero();
-deque<double> radar_time_buffer;
-deque<V3D>    radar_vel_buffer;
-mutex  mtx_radar;
-#endif  // ====== [雷达速度融合-已注释] ======
+bool radar_en = false;
+string radar_topic = "/reve/velocity";
+string radar_frame = "radar_reve";
+double radar_chi2_thr = 16.0;
+double radar_time_tol = 0.05;
+double radar_time_offset = 0.0;  // Added to the reported REVE timestamp.
+double radar_covariance_scale = 1.0;
+vector<double> radar_extrinT, radar_extrinR;
+M3D Radar_R_wrt_IMU = M3D::Identity();
+V3D Radar_T_wrt_IMU = V3D::Zero();
+
+struct RadarVelocityObservation
+{
+    double stamp;
+    V3D velocity;
+    M3D covariance;
+};
+deque<RadarVelocityObservation, Eigen::aligned_allocator<RadarVelocityObservation>> radar_buffer;
+double last_radar_stamp = 0.0;
+mutex mtx_radar;
 
 vector<vector<int>>  pointSearchInd_surf; 
 vector<BoxPointType> cub_needrm;
@@ -393,22 +394,37 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
     sig_buffer.notify_all();
 }
 
-#if 1   // ====== [雷达速度融合-已启用] ======
-//雷达自速度回调: 接收外部节点(CAN解析+RANSAC估计)发布的雷达系自速度
-void radar_vel_cbk(const geometry_msgs::TwistStamped::ConstPtr &msg)
+void radar_vel_cbk(const geometry_msgs::TwistWithCovarianceStamped::ConstPtr &msg)
 {
-    mtx_radar.lock();
-    radar_time_buffer.push_back(msg->header.stamp.toSec());
-    radar_vel_buffer.push_back(V3D(msg->twist.linear.x, msg->twist.linear.y, msg->twist.linear.z));
-    //限制缓存大小, 防止内存增长
-    while (radar_time_buffer.size() > 2000)
+    if (msg->header.stamp.isZero() || msg->header.frame_id != radar_frame)
     {
-        radar_time_buffer.pop_front();
-        radar_vel_buffer.pop_front();
+        ROS_WARN_THROTTLE(2.0, "REVE observation has an invalid stamp or frame");
+        return;
     }
-    mtx_radar.unlock();
+
+    RadarVelocityObservation obs;
+    obs.stamp = msg->header.stamp.toSec() + radar_time_offset;
+    const auto &linear = msg->twist.twist.linear;
+    obs.velocity = V3D(linear.x, linear.y, linear.z);
+    // REVE does not publish a mode flag. Conservatively skip exact-zero samples.
+    if (!obs.velocity.allFinite() || obs.velocity.isZero(0.0)) return;
+
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col)
+            obs.covariance(row, col) = msg->twist.covariance[6 * row + col];
+
+    if (!obs.covariance.allFinite() ||
+        !obs.covariance.isApprox(obs.covariance.transpose(), 1e-6)) return;
+    obs.covariance = (0.5 * (obs.covariance + obs.covariance.transpose())).eval();
+    obs.covariance *= radar_covariance_scale;
+    if (!obs.covariance.allFinite() || Eigen::LLT<M3D>(obs.covariance).info() != Eigen::Success) return;
+
+    std::lock_guard<mutex> lock(mtx_radar);
+    if (obs.stamp <= last_radar_stamp) return;
+    last_radar_stamp = obs.stamp;
+    radar_buffer.push_back(obs);
+    if (radar_buffer.size() > 2000) radar_buffer.pop_front();
 }
-#endif  // ====== [雷达速度融合-已注释] ======
 
 //时间戳对齐（imu数据和lidar数据）
 double lidar_mean_scantime = 0.0;
@@ -821,7 +837,6 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     solve_time += omp_get_wtime() - solve_start_;
 }
 
-#if 1   // ====== [雷达速度融合-已启用] ======
 //反对称矩阵
 static inline M3D skew_sym(const V3D &v)
 {
@@ -832,93 +847,46 @@ static inline M3D skew_sym(const V3D &v)
     return m;
 }
 
-//===== 雷达速度紧耦合融合 =====
-//在激光IESKF更新之后调用, 用雷达系自速度做一次标准EKF观测更新。
-//观测模型(雷达系): h = R_IS^T * (R_WI^T * v_W + omega × t_IS)
-//  R_WI = 当前姿态(IMU->World), R_IS/t_IS = 雷达->IMU外参, omega = gyr - bg
-void fuse_radar_velocity(const V3D &v_radar_meas, const V3D &gyr)
+// Radar velocity measurement in radar axes, including the IMU-to-radar lever arm.
+void fuse_radar_velocity(const RadarVelocityObservation &obs, const V3D &gyr)
 {
     state_ikfom s = kf.get_x();
-    Eigen::Matrix<double, 23, 23> P = kf.get_P();
+    const auto P = kf.get_P();
+    const M3D R_IW = s.rot.toRotationMatrix().transpose();
+    const M3D R_RI = Radar_R_wrt_IMU.transpose();
+    const V3D v_I = R_IW * s.vel;
+    const V3D omega = gyr - s.bg;
+    const V3D residual = obs.velocity - R_RI * (v_I + omega.cross(Radar_T_wrt_IMU));
+    if (!residual.allFinite()) return;
 
-    M3D R_WI = s.rot.toRotationMatrix();
-    const M3D &R_IS = Radar_R_wrt_IMU;
-    const V3D &t_IS = Radar_T_wrt_IMU;
-    V3D omega = gyr - s.bg;
-    V3D v_W   = s.vel;
-
-    //预测雷达系速度 + 残差
-    V3D h = R_IS.transpose() * (R_WI.transpose() * v_W + omega.cross(t_IS));
-    V3D r = v_radar_meas - h;
-
-    //观测雅可比 H = ∂h/∂x (3 x 23): 仅 vel(12-14)/rot(3-5)/bg(15-17) 三块非零
-    //【符号修正】原实现误用 ∂(z-h)/∂x(多了负号), 配 dx=K·r + boxplus(+) 导致修正量反号 => 必须是 ∂h/∂x
     Eigen::Matrix<double, 3, 23> H = Eigen::Matrix<double, 3, 23>::Zero();
-    H.block<3, 3>(0, 12) = R_IS.transpose() * R_WI.transpose();                  // ∂h/∂vel
-    if (!radar_vel_only)   // 速度-only模式: 不让雷达去纠正姿态/零偏(弱耦合, 高信任时易踢崩)
+    H.block<3, 3>(0, 12) = R_RI * R_IW;
+    H.block<3, 3>(0, 3) = R_RI * skew_sym(v_I);
+    H.block<3, 3>(0, 15) = R_RI * skew_sym(Radar_T_wrt_IMU);
+
+    const Eigen::Matrix<double, 23, 3> PHt = P * H.transpose();
+    const M3D S = H * PHt + obs.covariance;
+    if (!S.allFinite()) return;
+    const Eigen::LLT<M3D> innovation(S);
+    if (innovation.info() != Eigen::Success) return;
+    const double chi2 = residual.dot(innovation.solve(residual));
+    if (!std::isfinite(chi2) || chi2 > radar_chi2_thr)
     {
-        H.block<3, 3>(0, 3)  = R_IS.transpose() * skew_sym(R_WI.transpose() * v_W); // ∂h/∂rot
-        H.block<3, 3>(0, 15) = R_IS.transpose() * skew_sym(t_IS);                    // ∂h/∂bg (杆臂)
-    }
-
-    //自转/悬停平滑降权: 从测量中剔除杆臂项, 得到"真实平移"在雷达系的速度(其模≈|v_W|)
-    //平移大=>正常信任雷达(覆盖加速/匀速前进); 平移趋0=>噪声拉大到几乎忽略(自转杆臂项主导,易被t_IS误差污染)
-    V3D v_trans_radar = v_radar_meas - R_IS.transpose() * (omega.cross(t_IS));
-    double v_t = v_trans_radar.norm();
-    double w = (v_t * v_t) / (v_t * v_t + radar_min_trans_vel * radar_min_trans_vel); // 信任权重∈(0,1]
-    if (w < 1e-3) w = 1e-3;          // 数值下限, 避免噪声=inf
-    double inflate = 1.0 / w;        // 噪声放大倍数: w=0.5→2x, w→0→最多1000x
-
-    //观测噪声(z轴对2D雷达设很大=>几乎不约束垂直)
-    M3D Rcov = M3D::Zero();
-    Rcov(0, 0) = radar_vel_cov * inflate;
-    Rcov(1, 1) = radar_vel_cov * inflate;
-    Rcov(2, 2) = radar_vel_cov_z;
-
-    //==== 退化感知解耦速度更新: 抗强退化(长隧道)的核心修复 ====
-    // 问题: 退化方向 FAST-LIO 后验 P_vel 因 EKF 不一致塌到极小 => 雷达增益≈0, 救不动;
-    //       强行调小R又会让 H 的 rot/bg 交叉项把姿态踢崩(发散)。
-    // 解法: 速度协方差用「下限」(反映退化方向真实不确定), 且只更新速度状态(切断对姿态/零偏的交叉修正)。
-    if (radar_robust)
-    {
-        // 标准EKF: H=∂h/∂vel(注意正号), 增益 K=P Hᵀ S⁻¹, 更新 v += K·(z-h)
-        M3D Hh = R_IS.transpose() * R_WI.transpose();       // ∂h/∂vel
-        M3D Pv = M3D::Identity() * radar_pvel_floor;        // 速度不确定性下限(不依赖塌掉的P)
-        M3D Sv = Hh * Pv * Hh.transpose() + Rcov;
-        M3D Sv_inv = Sv.inverse();
-        double chi2v = r.dot(Sv_inv * r);
-        if (chi2v > radar_chi2_thr) { ROS_DEBUG("[radar] robust update rejected, chi2=%.2f", chi2v); return; }
-        M3D Kv = Pv * Hh.transpose() * Sv_inv;              // 3x3 增益
-        s.vel += Kv * r;                                    // 只修正速度(世界系); r = z - h
-        M3D Pvv = (M3D::Identity() - Kv * Hh) * Pv;
-        kf.change_x(s);
-        P.block<3, 3>(12, 12) = Pvv;                        // 回写速度协方差块
-        P = 0.5 * (P + P.transpose()).eval();
-        kf.change_P(P);
+        ROS_DEBUG("REVE velocity rejected: chi2=%.2f", chi2);
         return;
     }
 
-    M3D S = H * P * H.transpose() + Rcov;
-    M3D S_inv = S.inverse();
-
-    //卡方检验: 挡住RANSAC漏检的动目标/异常帧
-    double chi2 = r.dot(S_inv * r);   // r^T S_inv r; 用 dot 避免 1x1 矩阵→标量的隐式转换问题
-    if (chi2 > radar_chi2_thr)
-    {
-        ROS_DEBUG("[radar] velocity update rejected, chi2 = %.2f", chi2);
-        return;
-    }
-
-    Eigen::Matrix<double, 23, 3> K = P * H.transpose() * S_inv;
-    Eigen::Matrix<double, 23, 1> dx = K * r;
-    s.boxplus(dx);                                            // 流形上更新状态
-    P = (Eigen::Matrix<double, 23, 23>::Identity() - K * H) * P;
-    P = 0.5 * (P + P.transpose()).eval();                     // 防数值退化, 保持协方差对称
-
+    const Eigen::Matrix<double, 23, 3> K = innovation.solve(PHt.transpose()).transpose();
+    const Eigen::Matrix<double, 23, 1> dx = K * residual;
+    const Eigen::Matrix<double, 23, 23> A = Eigen::Matrix<double, 23, 23>::Identity() - K * H;
+    Eigen::Matrix<double, 23, 23> posterior = A * P * A.transpose() + K * obs.covariance * K.transpose();
+    if (!dx.allFinite() || !posterior.allFinite()) return;
+    posterior = (0.5 * (posterior + posterior.transpose())).eval();
+    s.boxplus(dx);
     kf.change_x(s);
-    kf.change_P(P);
+    kf.change_P(posterior);
+    ROS_DEBUG("REVE velocity accepted: chi2=%.2f", chi2);
 }
-#endif  // ====== [雷达速度融合-已注释] ======
 
 int main(int argc, char** argv)
 {
@@ -962,21 +930,15 @@ int main(int argc, char** argv)
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);  //雷达相对于imu的外参R
     nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>());
     nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>());
-#if 1   // ====== [雷达速度融合-已启用] ======
-    //雷达速度融合参数
-    nh.param<bool>("radar/radar_en", radar_en, false);                  //是否启用雷达速度融合
-    nh.param<bool>("radar/vel_only", radar_vel_only, false);            //雷达只更新速度(H的rot/bg置零)
-    nh.param<bool>("radar/robust", radar_robust, false);               //退化感知解耦速度更新(抗强退化)
-    nh.param<double>("radar/pvel_floor", radar_pvel_floor, 0.5);       //速度协方差下限
-    nh.param<string>("radar/radar_topic", radar_topic, "/radar_velocity"); //雷达自速度话题
-    nh.param<double>("radar/vel_cov", radar_vel_cov, 0.1);              //水平速度观测噪声
-    nh.param<double>("radar/vel_cov_z", radar_vel_cov_z, 1e6);          //垂直速度噪声(2D雷达设很大)
-    nh.param<double>("radar/chi2_thr", radar_chi2_thr, 16.0);           //卡方门限
-    nh.param<double>("radar/time_tol", radar_time_tol, 0.05);           //时间匹配容差
-    nh.param<double>("radar/min_trans_vel", radar_min_trans_vel, 0.3);  //平移速度阈值(自转/悬停降权)
-    nh.param<vector<double>>("radar/extrinsic_T", radar_extrinT, vector<double>()); //雷达->IMU平移
-    nh.param<vector<double>>("radar/extrinsic_R", radar_extrinR, vector<double>()); //雷达->IMU旋转(含45°)
-#endif  // ====== [雷达速度融合-已注释] ======
+    nh.param<bool>("radar/radar_en", radar_en, false);
+    nh.param<string>("radar/radar_topic", radar_topic, "/reve/velocity");
+    nh.param<string>("radar/frame_id", radar_frame, "radar_reve");
+    nh.param<double>("radar/chi2_thr", radar_chi2_thr, 16.0);
+    nh.param<double>("radar/time_tol", radar_time_tol, 0.05);
+    nh.param<double>("radar/time_offset", radar_time_offset, 0.0);
+    nh.param<double>("radar/covariance_scale", radar_covariance_scale, 1.0);
+    nh.getParam("radar/extrinsic_T", radar_extrinT);
+    nh.getParam("radar/extrinsic_R", radar_extrinR);
     cout<<"p_pre->lidar_type "<<p_pre->lidar_type<<endl;
     
     path.header.stamp    = ros::Time::now();
@@ -1009,23 +971,27 @@ int main(int argc, char** argv)
 
     Lidar_T_wrt_IMU<<VEC_FROM_ARRAY(extrinT);
     Lidar_R_wrt_IMU<<MAT_FROM_ARRAY(extrinR);
-#if 1   // ====== [雷达速度融合-已启用] ======
-    //雷达外参(机头45°朝下安装), 仅在启用且参数齐全时加载
     if (radar_en)
     {
-        if (radar_extrinT.size() == 3 && radar_extrinR.size() == 9)
+        if (radar_extrinT.size() != 3 || radar_extrinR.size() != 9)
         {
-            Radar_T_wrt_IMU << VEC_FROM_ARRAY(radar_extrinT);
-            Radar_R_wrt_IMU << MAT_FROM_ARRAY(radar_extrinR);
-            cout << "[radar] velocity fusion ENABLED" << endl;
+            ROS_FATAL("REVE fusion requires calibrated radar/extrinsic_T and radar/extrinsic_R");
+            return 1;
         }
-        else
+        Radar_T_wrt_IMU << VEC_FROM_ARRAY(radar_extrinT);
+        Radar_R_wrt_IMU << MAT_FROM_ARRAY(radar_extrinR);
+        if (!Radar_T_wrt_IMU.allFinite() || !Radar_R_wrt_IMU.allFinite() ||
+            !(Radar_R_wrt_IMU.transpose() * Radar_R_wrt_IMU).isApprox(M3D::Identity(), 1e-5) ||
+            std::abs(Radar_R_wrt_IMU.determinant() - 1.0) > 1e-5 ||
+            !std::isfinite(radar_time_offset) || !std::isfinite(radar_time_tol) || radar_time_tol <= 0.0 ||
+            !std::isfinite(radar_covariance_scale) || radar_covariance_scale <= 0.0 ||
+            !std::isfinite(radar_chi2_thr) || radar_chi2_thr <= 0.0)
         {
-            ROS_WARN("[radar] radar_en=true but extrinsic_T/R not set correctly, "
-                     "fall back to identity (radar frame == IMU frame)!");
+            ROS_FATAL("Invalid REVE extrinsics, timing or noise parameters");
+            return 1;
         }
+        ROS_INFO_STREAM("REVE velocity fusion enabled on " << radar_topic);
     }
-#endif  // ====== [雷达速度融合-已注释] ======
     //设置IMU的参数，对p_imu初始化（p_imu为ImuProcess的智能指针）
     p_imu->set_extrinsic(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU);
     p_imu->set_gyr_cov(V3D(gyr_cov, gyr_cov, gyr_cov));
@@ -1056,10 +1022,8 @@ int main(int argc, char** argv)
         nh.subscribe(lid_topic, 200000, livox_pcl_cbk) : \
         nh.subscribe(lid_topic, 200000, standard_pcl_cbk);
     ros::Subscriber sub_imu = nh.subscribe(imu_topic, 200000, imu_cbk);
-#if 1   // ====== [雷达速度融合-已启用] ======
     ros::Subscriber sub_radar;
-    if (radar_en) sub_radar = nh.subscribe(radar_topic, 200000, radar_vel_cbk);
-#endif  // ====== [雷达速度融合-已注释] ======
+    if (radar_en) sub_radar = nh.subscribe(radar_topic, 2000, radar_vel_cbk);
     ros::Publisher pubLaserCloudFull = nh.advertise<sensor_msgs::PointCloud2>
             ("/cloud_registered", 100000);
     ros::Publisher pubLaserCloudFull_body = nh.advertise<sensor_msgs::PointCloud2>
@@ -1173,35 +1137,35 @@ int main(int argc, char** argv)
             double solve_H_time = 0;
             kf.update_iterated_dyn_share_modified(LASER_POINT_COV, solve_H_time);
 
-#if 1   // ====== [雷达速度融合-已启用] ======
-            /*** Radar velocity update: 补上激光在退化方向(管廊轴向)缺失的约束 ***/
             if (radar_en && !Measures.imu.empty())
             {
-                //找时间上最接近 lidar_end_time 的雷达速度
-                V3D v_radar; bool got = false;
-                mtx_radar.lock();
-                double best_dt = radar_time_tol;
-                for (int i = 0; i < (int)radar_time_buffer.size(); i++)
+                RadarVelocityObservation obs;
+                bool got = false;
                 {
-                    double dt = fabs(radar_time_buffer[i] - lidar_end_time);
-                    if (dt < best_dt) { best_dt = dt; v_radar = radar_vel_buffer[i]; got = true; }
+                    std::lock_guard<mutex> lock(mtx_radar);
+                    // Apply only the newest causal observation within the scan-end tolerance.
+                    while (!radar_buffer.empty() && radar_buffer.front().stamp <= lidar_end_time)
+                    {
+                        obs = radar_buffer.front();
+                        radar_buffer.pop_front();
+                        got = true;
+                    }
                 }
-                //清理过期数据(早于当前帧1秒以上)
-                while (!radar_time_buffer.empty() && radar_time_buffer.front() < lidar_end_time - 1.0)
+                if (got && lidar_end_time - obs.stamp <= radar_time_tol)
                 {
-                    radar_time_buffer.pop_front();
-                    radar_vel_buffer.pop_front();
-                }
-                mtx_radar.unlock();
-
-                if (got)
-                {
-                    //取本帧末尾的IMU角速度, 用于杆臂补偿(ω × t_IS)
-                    const auto &av = Measures.imu.back()->angular_velocity;
-                    fuse_radar_velocity(v_radar, V3D(av.x, av.y, av.z));
+                    const auto imu = std::min_element(Measures.imu.begin(), Measures.imu.end(),
+                        [&obs](const sensor_msgs::Imu::ConstPtr &a, const sensor_msgs::Imu::ConstPtr &b)
+                        {
+                            return std::abs(a->header.stamp.toSec() - obs.stamp) <
+                                   std::abs(b->header.stamp.toSec() - obs.stamp);
+                        });
+                    if (std::abs((*imu)->header.stamp.toSec() - obs.stamp) <= radar_time_tol)
+                    {
+                        const auto &av = (*imu)->angular_velocity;
+                        fuse_radar_velocity(obs, V3D(av.x, av.y, av.z));
+                    }
                 }
             }
-#endif  // ====== [雷达速度融合-已注释] ======
 
             state_point = kf.get_x();
             euler_cur = SO3ToEuler(state_point.rot);
