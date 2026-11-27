@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -10,6 +11,7 @@
 #include <nav_msgs/Odometry.h>
 #include <ros/ros.h>
 #include <sensor_msgs/Range.h>
+#include <std_msgs/Float64MultiArray.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <tf2_ros/transform_listener.h>
 #include <tof_velocity_guard/directional_limits.h>
@@ -36,7 +38,7 @@ void limitHorizontal(geometry_msgs::Vector3& vector, double limit) {
 
 class VelocityLimiter {
  public:
-  VelocityLimiter(ros::NodeHandle& nh, const ros::NodeHandle& params)
+  VelocityLimiter(ros::NodeHandle& nh, ros::NodeHandle& params)
       : body_frame_(params.param<std::string>("body_frame", "body")),
         stop_distance_(params.param("stop_distance", 0.35)),
         slow_distance_(params.param("slow_distance", 0.9)),
@@ -84,6 +86,8 @@ class VelocityLimiter {
     }
 
     publisher_ = nh.advertise<geometry_msgs::TwistStamped>(output, 1);
+    speed_limits_pub_ = params.advertise<std_msgs::Float64MultiArray>("directional_speed_limits", 1);
+    range_speed_pub_ = params.advertise<std_msgs::Float64MultiArray>("directional_range_speed", 1);
     if (!odometry_topic_.empty()) {
       const auto acceleration_topic =
           params.param<std::string>("acceleration_topic", "/tof/limited_acceleration");
@@ -107,6 +111,10 @@ class VelocityLimiter {
     output.header.frame_id = body_frame_;
     geometry_msgs::AccelStamped acceleration;
     acceleration.header = output.header;
+    std::array<double, kRangeTopics.size()> speed_limits;
+    for (std::size_t i = 0; i < speed_limits.size(); ++i) {
+      speed_limits[i] = towardLimit(ranges_[i], output.header.stamp);
+    }
 
     tf2::Quaternion rotation;
     tf2::Vector3 velocity;
@@ -116,13 +124,10 @@ class VelocityLimiter {
       velocity = tf2::quatRotate(rotation, velocity);
       tf2::Vector3 measured(0, 0, 0);
       tf2::Vector3 feedforward(0, 0, 0);
-      const auto toward = [&](Direction direction) {
-        return towardLimit(ranges_[direction], output.header.stamp);
-      };
       if (isFinite(velocity) &&
           (odometry_topic_.empty() || trackingState(output.header.stamp, rotation, velocity, measured, feedforward))) {
-        const double front = toward(kFront), rear = toward(kRear);
-        const double left = toward(kLeft), right = toward(kRight);
+        const double front = speed_limits[kFront], rear = speed_limits[kRear];
+        const double left = speed_limits[kLeft], right = speed_limits[kRight];
         auto& linear = output.twist.linear;
         linear.x = clamp(velocity.x(), -rear, front);
         linear.y = clamp(velocity.y(), -right, left);
@@ -138,6 +143,23 @@ class VelocityLimiter {
     publisher_.publish(output);
     if (acceleration_pub_) {
       acceleration_pub_.publish(acceleration);
+    }
+    if (speed_limits_pub_.getNumSubscribers() > 0) {
+      std_msgs::Float64MultiArray message;
+      message.data.assign(speed_limits.begin(), speed_limits.end());
+      speed_limits_pub_.publish(message);
+    }
+    if (range_speed_pub_.getNumSubscribers() > 0) {
+      std_msgs::Float64MultiArray message;
+      message.data.reserve(2 * speed_limits.size());
+      for (std::size_t i = 0; i < speed_limits.size(); ++i) {
+        const auto& measurement = ranges_[i];
+        const double distance = isValidRange(measurement, output.header.stamp, range_timeout_)
+                                    ? measurement->range : std::numeric_limits<double>::quiet_NaN();
+        message.data.push_back(distance);
+        message.data.push_back(speed_limits[i]);
+      }
+      range_speed_pub_.publish(message);
     }
   }
 
@@ -219,7 +241,7 @@ class VelocityLimiter {
   double odometry_timeout_, position_gain_, velocity_gain_, max_acceleration_;
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
-  ros::Publisher publisher_, acceleration_pub_;
+  ros::Publisher publisher_, acceleration_pub_, speed_limits_pub_, range_speed_pub_;
   ros::Subscriber command_sub_, odometry_sub_;
   std::array<ros::Subscriber, 4> range_subs_;
   std::array<sensor_msgs::Range::ConstPtr, 4> ranges_;
@@ -235,7 +257,7 @@ class VelocityLimiter {
 int main(int argc, char** argv) {
   ros::init(argc, argv, "tof_velocity_limiter");
   ros::NodeHandle nh;
-  const ros::NodeHandle params("~");
+  ros::NodeHandle params("~");
   try {
     VelocityLimiter limiter(nh, params);
     ros::Rate rate(30);

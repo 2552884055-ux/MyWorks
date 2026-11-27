@@ -1,0 +1,48 @@
+<launch>
+  <!-- 从项目根目录运行：
+       source devel/setup.bash
+       roslaunch test/tof/bench_speed_limits.launch port:=/dev/ttyUSB0
+
+       已有 ToF 串口节点在采集时：
+       roslaunch test/tof/bench_speed_limits.launch start_serial:=false
+
+       无桌面显示时，在启动命令末尾加 show_plots:=false。
+  -->
+  <arg name="start_serial" default="true" />
+  <arg name="show_plots" default="true" />
+  <arg name="port" default="/dev/ttyUSB0" />
+  <arg name="baud" default="115200" />
+  <arg name="protocol" default="tof1" />
+  <arg name="max_range" default="2.0" />
+  <arg name="bench_namespace" default="tof_bench" />
+  <arg name="stop_distance" default="0.35" />
+  <arg name="slow_distance" default="0.9" />
+  <arg name="max_horizontal_speed" default="0.3" />
+  <arg name="range_timeout" default="0.2" />
+
+  <include if="$(arg start_serial)" file="$(find tof_velocity_guard)/launch/serial_range.launch">
+    <arg name="port" value="$(arg port)" />
+    <arg name="baud" value="$(arg baud)" />
+    <arg name="protocol" value="$(arg protocol)" />
+    <arg name="max_range" value="$(arg max_range)" />
+  </include>
+
+  <group ns="$(arg bench_namespace)">
+    <include file="$(find tof_velocity_guard)/launch/velocity_limiter.launch">
+      <arg name="input_type" value="twist_stamped" />
+      <arg name="input_topic" value="test_velocity" />
+      <arg name="output_topic" value="limited_velocity" />
+      <arg name="stop_distance" value="$(arg stop_distance)" />
+      <arg name="slow_distance" value="$(arg slow_distance)" />
+      <arg name="max_horizontal_speed" value="$(arg max_horizontal_speed)" />
+      <arg name="range_timeout" value="$(arg range_timeout)" />
+    </include>
+
+    <group if="$(arg show_plots)">
+      <node pkg="tof_velocity_guard" type="plot_speed_limits.py" name="speed_limits_over_time"
+            args="--topic tof_velocity_limiter/directional_speed_limits" output="screen" />
+      <node pkg="tof_velocity_guard" type="plot_speed_limits.py" name="speed_limits_by_distance"
+            args="--against-distance --topic tof_velocity_limiter/directional_range_speed" output="screen" />
+    </group>
+  </group>
+</launch>

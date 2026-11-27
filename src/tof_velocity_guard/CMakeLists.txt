@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.5)
 project(tof_velocity_guard)
 
-find_package(catkin REQUIRED COMPONENTS geometry_msgs nav_msgs roscpp sensor_msgs tf2 tf2_geometry_msgs tf2_ros)
+find_package(catkin REQUIRED COMPONENTS geometry_msgs nav_msgs roscpp sensor_msgs std_msgs tf2 tf2_geometry_msgs tf2_ros)
 find_package(quadrotor_msgs QUIET CONFIG)
 catkin_package(INCLUDE_DIRS include
-  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp sensor_msgs tf2 tf2_geometry_msgs tf2_ros)
+  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp sensor_msgs std_msgs tf2 tf2_geometry_msgs tf2_ros)
 
 add_executable(serial_range_node src/serial_range_node.cpp)
 add_executable(velocity_limiter_node src/velocity_limiter_node.cpp)
@@ -25,6 +25,9 @@ endif()
 
 install(TARGETS serial_range_node velocity_limiter_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+catkin_install_python(PROGRAMS scripts/plot_speed_limits.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 install(DIRECTORY launch/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch

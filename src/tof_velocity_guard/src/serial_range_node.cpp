@@ -6,6 +6,7 @@
 #include <array>
 #include <cerrno>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <regex>
 #include <string>
@@ -18,7 +19,61 @@ namespace {
 
 constexpr std::array<const char*, 4> kDirections{{"front", "rear", "left", "right"}};
 constexpr std::size_t kMaxLineBytes = 80;
-const std::regex kFrame(R"([ \t]*(?:-1|[0-9]{1,6})(?:[ \t]*,[ \t]*(?:-1|[0-9]{1,6})){3}[ \t\r]*)");
+const std::regex kLegacyFrame(R"([ \t]*(?:-1|[0-9]{1,6})(?:[ \t]*,[ \t]*(?:-1|[0-9]{1,6})){3}[ \t\r]*)");
+const std::regex kTof1Frame(
+    R"(\$(TOF1,([0-9]{1,10}),([0-9]{1,10}),([0-9]{1,6}),([0-3]),([0-9]{1,6}),([0-3]),([0-9]{1,6}),([0-3]),([0-9]{1,6}),([0-3]))\*([0-9A-Fa-f]{4})\r?)");
+
+std::uint16_t tofCrc(const std::string& payload) {
+  std::uint16_t crc = 0xFFFF;
+  for (const unsigned char byte : payload) {
+    crc ^= static_cast<std::uint16_t>(byte) << 8;
+    for (int bit = 0; bit < 8; ++bit) {
+      crc = static_cast<std::uint16_t>((crc << 1) ^ ((crc & 0x8000) ? 0x1021 : 0));
+    }
+  }
+  return crc;
+}
+
+using Distances = std::array<int, kDirections.size()>;
+
+bool parseTof1(const std::string& line, Distances& distances_mm) {
+  std::smatch fields;
+  if (!std::regex_match(line, fields, kTof1Frame)) {
+    ROS_WARN_THROTTLE(5.0, "Ignoring malformed TOF1 serial line");
+    return false;
+  }
+  if (tofCrc(fields[1].str()) != std::stoul(fields[12].str(), nullptr, 16)) {
+    ROS_WARN_THROTTLE(5.0, "Ignoring TOF1 frame with invalid CRC");
+    return false;
+  }
+  constexpr auto max_counter = std::numeric_limits<std::uint32_t>::max();
+  if (std::stoull(fields[2].str()) > max_counter || std::stoull(fields[3].str()) > max_counter) {
+    ROS_WARN_THROTTLE(5.0, "Ignoring TOF1 frame with an out-of-range counter");
+    return false;
+  }
+
+  for (std::size_t i = 0; i < distances_mm.size(); ++i) {
+    const auto distance_field = 4 + 2 * i;
+    distances_mm[i] = fields[distance_field + 1].str() == "0"
+                          ? std::stoi(fields[distance_field].str()) : -1;
+  }
+  return true;
+}
+
+bool parseLegacyCsv(const std::string& line, Distances& distances_mm) {
+  if (!std::regex_match(line, kLegacyFrame)) {
+    ROS_WARN_THROTTLE(5.0, "Ignoring malformed legacy ToF serial line");
+    return false;
+  }
+  std::size_t start = 0;
+  for (std::size_t i = 0; i < distances_mm.size(); ++i) {
+    distances_mm[i] = std::stoi(line.substr(start));
+    if (i + 1 < distances_mm.size()) {
+      start = line.find(',', start) + 1;
+    }
+  }
+  return true;
+}
 
 speed_t serialSpeed(int baud) {
   switch (baud) {
@@ -110,22 +165,14 @@ class SerialPort {
   int fd_;
 };
 
-void publishLine(const std::string& line, const std::array<ros::Publisher, 4>& publishers,
+void publishRanges(const Distances& distances_mm, const std::array<ros::Publisher, 4>& publishers,
                  const std::array<std::string, 4>& frame_ids, sensor_msgs::Range message) {
-  if (!std::regex_match(line, kFrame)) {
-    ROS_WARN_THROTTLE(5.0, "Ignoring malformed ToF serial line");
-    return;
-  }
   message.header.stamp = ros::Time::now();
-  std::size_t start = 0;
   for (std::size_t i = 0; i < publishers.size(); ++i) {
-    const int mm = std::stoi(line.substr(start));
+    const int mm = distances_mm[i];
     message.header.frame_id = frame_ids[i];
     message.range = mm == -1 ? std::numeric_limits<float>::quiet_NaN() : mm / 1000.0f;
     publishers[i].publish(message);
-    if (i + 1 < publishers.size()) {
-      start = line.find(',', start) + 1;
-    }
   }
 }
 
@@ -135,11 +182,18 @@ int main(int argc, char** argv) {
   ros::init(argc, argv, "tof");
   ros::NodeHandle private_nh("~");
   const auto port = private_nh.param<std::string>("port", "/dev/ttyUSB0");
+  const auto protocol = private_nh.param<std::string>("protocol", "tof1");
   const int baud = private_nh.param("baud", 115200);
   const auto min_range = private_nh.param("min_range", 0.03);
-  const auto max_range = private_nh.param("max_range", 1.2);
+  const auto max_range = private_nh.param("max_range", 2.0);
   const auto field_of_view = private_nh.param("field_of_view", 0.44);
   const speed_t speed = serialSpeed(baud);
+
+  if (protocol != "tof1" && protocol != "legacy_csv") {
+    ROS_FATAL("Unsupported ToF serial protocol: %s", protocol.c_str());
+    return 1;
+  }
+  const auto parse = protocol == "tof1" ? parseTof1 : parseLegacyCsv;
 
   if (speed == B0) {
     ROS_FATAL("Unsupported serial baud rate: %d", baud);
@@ -168,7 +222,7 @@ int main(int argc, char** argv) {
   while (ros::ok()) {
     try {
       const SerialPort serial(port, speed);
-      ROS_INFO("Reading ToF ranges from %s at %d baud", port.c_str(), baud);
+      ROS_INFO("Reading ToF ranges from %s at %d baud (%s)", port.c_str(), baud, protocol.c_str());
       std::string line;
       line.reserve(kMaxLineBytes);
       bool discard = false;
@@ -179,7 +233,10 @@ int main(int argc, char** argv) {
           const char byte = bytes[i];
           if (byte == '\n') {
             if (!discard) {
-              publishLine(line, publishers, frame_ids, message);
+              Distances distances_mm;
+              if (parse(line, distances_mm)) {
+                publishRanges(distances_mm, publishers, frame_ids, message);
+              }
             }
             line.clear();
             discard = false;

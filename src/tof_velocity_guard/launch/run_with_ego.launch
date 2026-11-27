@@ -2,6 +2,7 @@
   <arg name="start_serial" default="true" />
   <arg name="port" default="/dev/ttyUSB0" />
   <arg name="baud" default="115200" />
+  <arg name="protocol" default="tof1" />
   <arg name="goal_height" default="1.0" />
   <arg name="odometry_topic" default="/Odometry" />
   <arg name="position_cmd_topic" default="/position_cmd" />
@@ -29,6 +30,7 @@
   <include if="$(arg start_serial)" file="$(find tof_velocity_guard)/launch/serial_range.launch">
     <arg name="port" value="$(arg port)" />
     <arg name="baud" value="$(arg baud)" />
+    <arg name="protocol" value="$(arg protocol)" />
   </include>
 
   <include file="$(find tof_velocity_guard)/launch/velocity_limiter.launch">

@@ -29,11 +29,13 @@ source devel/setup.bash
 
 ## 分阶段运行
 
+要查找或复现现有测试，从[项目测试索引](test/README.md)进入。
+
 ### 读取 STM32 四路测距
 
 串口协议、限幅参数与两个节点的启动说明见[测距与速度限幅 README](src/tof_velocity_guard/README.md)。
 
-STM32 串口使用 115200、8N1，无流控。每行发送四个十进制毫米值，顺序固定为前、后、左、右，逗号分隔，以 LF 或 CRLF 结束。例如 `420,710,-1,980\r\n` 表示左侧读取失败。`-1` 发布为 `NaN`；其余数值换算成米，接收端应仅使用位于消息 `min_range` 至 `max_range` 内的有限值。格式错误的行丢弃，串口断开后自动重连，期间不重复发布旧值。
+STM32 串口默认使用 115200、8N1、无流控。节点校验带 CRC 的 `TOF1` 帧，再发布前、后、左、右四路距离。单路无效读数发布为 `NaN`，校验失败的帧整组丢弃。旧四整数固件可指定 `protocol:=legacy_csv`。
 
 ```bash
 source devel/setup.bash

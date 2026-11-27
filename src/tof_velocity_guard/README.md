@@ -5,10 +5,17 @@ STM32 采集前、后、左、右四个 VL53L0X 的距离，通过串口发给�
 ## STM32 串口格式
 
 - 默认波特率 `115200`，8 个数据位、无校验、1 个停止位，无流控。
-- 每组数据占一行，顺序固定为 `前,后,左,右`。有效读数使用非负毫米整数，单路读取失败填 `-1`。
-- 用换行字节 `\n` 或 `\r\n` 结束一行。不要在同一行附加标签、单位或调试文字。
+- 每组数据占一行，四路顺序为前、后、左、右。每路包含一个毫米整数和一个状态，状态 `0` 表示有效，`1` 至 `3` 表示无效并发布为 `NaN`。
+- 用换行字节 `\n` 或 `\r\n` 结束一行。序号和 STM32 采样完成时间（开机后毫秒数）是 `uint32`，ROS 消息使用本机接收时间。
 
-例如，发送 `420,710,-1,980\r\n`，ROS 会输出前 `0.420 m`、后 `0.710 m`、左 `NaN`、右 `0.980 m`。
+```text
+$TOF1,<seq>,<t_ms>,<front_mm>,<front_status>,<rear_mm>,<rear_status>,<left_mm>,<left_status>,<right_mm>,<right_status>*<CRC16>
+$TOF1,123,456789,420,0,710,0,0,3,980,0*8CA2
+```
+
+CRC-16/CCITT-FALSE 对 `$` 和 `*` 之间的字节计算，初值 `0xFFFF`、多项式 `0x1021`。格式错误或校验失败时丢弃整帧。示例输出前 `0.420 m`、后 `0.710 m`、左 `NaN`、右 `0.980 m`。
+
+旧固件若仍发送 `420,710,-1,980\r\n` 形式的四整数 CSV，启动时指定 `protocol:=legacy_csv`。
 
 ## 启动
 
@@ -25,8 +32,9 @@ roslaunch tof_velocity_guard serial_range.launch port:=/dev/ttyUSB0
 | --- | --- | --- |
 | `port` | `/dev/ttyUSB0` | 本机串口设备 |
 | `baud` | `115200` | 需与 STM32 设置一致 |
+| `protocol` | `tof1` | `tof1` 带 CRC，`legacy_csv` 是旧四整数格式 |
 | `min_range` | `0.03` | 最小有效距离，单位 m |
-| `max_range` | `1.2` | 最大有效距离，单位 m |
+| `max_range` | `2.0` | 本机接受的最大有效距离，单位 m |
 | `field_of_view` | `0.44` | 消息中的视场角，单位 rad |
 
 量程和视场角参数请按实测设置。若节点一直报串口打开失败，先检查设备路径和当前用户的读写权限。
@@ -88,6 +96,22 @@ rostopic echo -n 1 /mavros/local_position/odom
 ```
 
 ## 按四路距离限制速度指令
+
+### 台架复现
+
+见[项目测试目录中的 ToF 台架说明](../../test/tof/README.md)，包含一键启动命令和通过标准。
+
+### 单独启动与话题
+
+限幅节点的私有话题 `~directional_speed_limits` 发布四个方向各自允许的速度，单位为 m/s，顺序为前、后、左、右。有测距数据即可观察这些上限，实际速度指令仍由规划输入决定。桌面上可用以下命令打开实时曲线：
+
+```bash
+rosrun tof_velocity_guard plot_speed_limits.py
+```
+
+如果限幅节点在命名空间内，使用 `--topic` 指定完整的 `directional_speed_limits` 话题。
+
+用 `rosrun tof_velocity_guard plot_speed_limits.py --against-distance` 可改用测距作横轴。此模式订阅 `~directional_range_speed`，每组发布前、后、左、右四对 `[距离(m), 上限(m/s)]`；无效距离为 `NaN`，不会绘成有效测距点。虚线是按限幅参数画的参考，实点是最近 15 秒的实测样本。
 
 先启动测距节点，再启动限幅节点。EGO-Planner 的 `PositionCommand` 需要在编译时找到 `quadrotor_msgs`。如果它在另一个工作区，先编译该工作区，再用下面的命令构建本包。把示例中的路径改为实际包含 `quadrotor_msgsConfig.cmake` 的目录。
 
