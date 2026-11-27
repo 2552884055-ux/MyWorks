@@ -31,6 +31,8 @@ RadarEgoVelocityEstimatorRos::RadarEgoVelocityEstimatorRos(ros::NodeHandle nh)
 {
   reconfigure_server_.setCallback(boost::bind(&RadarEgoVelocityEstimatorRos::reconfigureCallback, this, _1, _2));
 
+  nh.param<std::string>("output_frame_id", output_frame_id_, "");
+
   run_without_trigger = false;
   getRosParameter(nh, kPrefix, RosParameterType::Recommended, "run_without_trigger", run_without_trigger);
 
@@ -132,7 +134,9 @@ void RadarEgoVelocityEstimatorRos::processRadarData(const sensor_msgs::PointClou
 
     geometry_msgs::TwistWithCovarianceStamped msg;
     msg.header.stamp         = trigger_stamp;
-    msg.header.frame_id      = (radar_scan.header.frame_id.empty())? "radar" : radar_scan.header.frame_id;
+    msg.header.frame_id = output_frame_id_;
+    if (msg.header.frame_id.empty())
+      msg.header.frame_id = radar_scan.header.frame_id.empty() ? "radar" : radar_scan.header.frame_id;
     msg.twist.twist.linear.x = v_b_r.x();
     msg.twist.twist.linear.y = v_b_r.y();
     msg.twist.twist.linear.z = v_b_r.z();

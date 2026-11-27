@@ -1,0 +1,51 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Background Color: 25; 25; 30
+    Fixed Frame: ti_mmwave
+    Frame Rate: 30
+  Displays:
+    - Class: rviz/Grid
+      Name: Grid (0.25 m)
+      Enabled: true
+      Plane: XY
+      Cell Size: 0.25
+      Plane Cell Count: 24
+    - Class: rviz/Axes
+      Name: Radar origin
+      Enabled: true
+      Length: 0.3
+      Radius: 0.01
+    - Class: rviz/PointCloud2
+      Name: Live radar points
+      Enabled: true
+      Topic: /ti_mmwave/radar_scan_pcl
+      Queue Size: 10
+      Position Transformer: XYZ
+      Color Transformer: Intensity
+      Channel Name: intensity
+      Autocompute Intensity Bounds: true
+      Style: Spheres
+      Size (m): 0.03
+      Decay Time: 0
+  Tools:
+    - Class: rviz/MoveCamera
+    - Class: rviz/Interact
+      Hide Inactive Objects: true
+    - Class: rviz/Select
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Distance: 4
+      Pitch: 0.55
+      Yaw: 0.7
+      Focal Point:
+        X: 1.5
+        Y: 0
+        Z: 0
+Window Geometry:
+  Width: 1100
+  Height: 800

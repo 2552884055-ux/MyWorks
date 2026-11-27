@@ -102,6 +102,8 @@ private:
   ros::Publisher pub_twist_;
   ros::Publisher pub_twist_ground_truth_;
 
+  std::string output_frame_id_;
+
   bool run_without_trigger = false;
 
   std::mutex mutex_;

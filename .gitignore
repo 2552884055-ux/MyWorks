@@ -16,3 +16,7 @@
 .vscode/
 __pycache__/
 *.py[cod]
+
+# TI radar firmware is obtained separately from the vendor.
+/src/ti_radar/ti_mmwave_rospkg/bin/*.bin
+/src/ti_radar/ti_mmwave_rospkg/bin/*.appimage

@@ -134,6 +134,13 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
       }
     }
 
+    if (valid_targets.size() <= 2)
+    {
+      ROS_WARN_THROTTLE(1.0, "[REVE] Insufficient valid targets: %zu after filtering, %zu input points",
+                        valid_targets.size(), radar_scan->size());
+      return false;
+    }
+
     if (valid_targets.size() > 2)
     {
       // check for zero velocity
@@ -249,11 +256,20 @@ bool RadarEgoVelocityEstimator::solve3DLsqRansac(const Matrix& radar_data,
     return solve3DLsq(radar_data_inlier, v_r, P_v_r, true);
   }
 
+  ROS_WARN_THROTTLE(1.0, "[REVE] RANSAC found no valid 3D model from %ld targets",
+                    static_cast<long>(radar_data.rows()));
   return false;
 }
 
 bool RadarEgoVelocityEstimator::solve3DLsq(const Matrix& radar_data, Vector3& v_r, Matrix3& P_v_r, bool estimate_sigma)
 {
+  if (estimate_sigma && radar_data.rows() <= 3)
+  {
+    ROS_WARN_THROTTLE(1.0, "[REVE] Only %ld inliers: at least 4 are required to estimate covariance",
+                      static_cast<long>(radar_data.rows()));
+    return false;
+  }
+
   Matrix H(radar_data.rows(), 3);
   H.col(0)         = radar_data.col(0);
   H.col(1)         = radar_data.col(1);
@@ -264,6 +280,10 @@ bool RadarEgoVelocityEstimator::solve3DLsq(const Matrix& radar_data, Vector3& v_
 
   Eigen::JacobiSVD<Matrix> svd(HTH);
   Real cond = svd.singularValues()(0) / svd.singularValues()(svd.singularValues().size() - 1);
+
+  if (estimate_sigma && (!std::isfinite(cond) || std::fabs(cond) >= 1.0e3))
+    ROS_WARN_THROTTLE(1.0, "[REVE] Degenerate target geometry: condition=%g, limit=1000, inliers=%ld",
+                      cond, static_cast<long>(radar_data.rows()));
 
   if (std::fabs(cond) < 1.0e3)
   {
@@ -291,6 +311,16 @@ bool RadarEgoVelocityEstimator::solve3DLsq(const Matrix& radar_data, Vector3& v_
         if (sigma_v_r.x() < config_.max_sigma_x && sigma_v_r.y() < config_.max_sigma_y &&
             sigma_v_r.z() < config_.max_sigma_z)
           return true;
+        ROS_WARN_THROTTLE(1.0,
+                          "[REVE] Velocity sigma exceeds limits: xyz=(%.3f, %.3f, %.3f), limits=(%.3f, %.3f, %.3f), inliers=%ld",
+                          sigma_v_r.x(), sigma_v_r.y(), sigma_v_r.z(),
+                          config_.max_sigma_x, config_.max_sigma_y, config_.max_sigma_z,
+                          static_cast<long>(radar_data.rows()));
+      }
+      else
+      {
+        ROS_WARN_THROTTLE(1.0, "[REVE] Invalid covariance with %ld inliers",
+                          static_cast<long>(radar_data.rows()));
       }
     }
     else

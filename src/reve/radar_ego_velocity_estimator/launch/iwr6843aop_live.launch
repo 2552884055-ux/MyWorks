@@ -1,0 +1,26 @@
+<launch>
+  <arg name="rviz" default="true"/>
+  <arg name="plot" default="true"/>
+  <arg name="start_driver" default="true"/>
+  <arg name="radar_config" default="$(find ti_mmwave_rospkg)/cfg/6843AOP_icins2021.cfg"/>
+  <include if="$(arg start_driver)" file="$(find ti_mmwave_rospkg)/launch/6843AOP_reve.launch">
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="config_file" value="$(arg radar_config)"/>
+  </include>
+  <!-- REVE's TI conversion produces X right, Y forward, Z up. -->
+  <node pkg="tf" type="static_transform_publisher" name="reve_radar_frame"
+        args="0 0 0 -1.5707963267948966 0 0 ti_mmwave radar_reve 100"/>
+  <node pkg="radar_ego_velocity_estimator" type="radar_ego_velocity_estimation_ros_node"
+        name="reve" output="screen" required="true">
+    <rosparam file="$(find radar_ego_velocity_estimator)/config/params_demo_dataset.yaml"/>
+    <param name="run_without_trigger" value="true"/>
+    <param name="topic_radar_scan" value="/ti_mmwave/radar_scan_pcl"/>
+    <param name="topic_twist" value="/reve/velocity"/>
+    <param name="output_frame_id" value="radar_reve"/>
+    <param name="use_odr" value="false"/>
+  </node>
+  <node if="$(arg plot)" pkg="radar_ego_velocity_estimator" type="live_velocity_plot.py"
+        name="live_velocity_plot" output="screen">
+    <param name="topic" value="/reve/velocity"/>
+  </node>
+</launch>
